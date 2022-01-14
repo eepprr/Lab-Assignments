@@ -1,0 +1,506 @@
+---
+title: "Lab Assignement 2 - Pain"
+author: "Elise Perrault"
+date: "14/01/2022"
+output: pdf_document
+fontsize: 12pt
+mainfont: Times New Roman
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, cache = TRUE, echo = FALSE, include = FALSE)
+```
+
+# 1- Introduction 
+This assignment investigates what factors influence post-operative pain after wisdom tooth surgery. It analyses data collected from 200 adult patients. Data were collected through a form filled out by patients five minutes before their surgery. It includes questions about their sex, age, income, and weight, as well as a psychology questionnaire. In addition, blood and saliva samples were done to measure cortisol levels. Finally, the level of experienced pain was collected five hours after the operation. 
+A multivariate analysis was conducted to determine the most influential factors, with hospital as a random-effect predictor to accomodate for the clustering of data in hospitals. It shows that preoperative stress is one of the main factor influencing pain.
+
+
+```{r include = FALSE}
+setwd("G:/My Drive/Cours/SIMM61/Lab 2/Mixed effects")
+library(psych) # for describe		
+library(tidyverse) # for tidy code and ggplot	
+library(qwraps2)
+library(dplyr)
+library(cAIC4) # for cAIC		
+library(r2glmm) # for r2beta		
+library(lme4) # for lmer	
+library(lmerTest) # to get singificance test in lmer	
+library(MuMIn) # for r.squaredGLMM
+library(stargazer)
+
+data_surgeryA <- read.csv("surgery_data_A.csv")
+
+data_surgeryB <- read.csv("surgery_data_B.csv")
+```
+
+```{r include = FALSE}
+# Custom function : Standardized coefficient
+
+stdCoef.merMod <- function(object) {
+sdy <- sd(getME(object, "y")) 
+sdx <- apply(getME(object, "X"), 2, sd)
+sc <- fixef(object) * sdx/sdy 
+se.fixef <- coef(summary(object))[, "Std. Error"] 
+se <- se.fixef * sdx/sdy 
+return(data.frame(stdcoef = sc, stdse = se))
+}
+```
+
+```{r include = FALSE}
+# Custom function error plotter
+
+error_plotter <- function(mod, col = "black", x_var = NULL) {
+  mod_vars = as.character(mod$call[2])
+  data = as.data.frame(eval(parse(text = as.character(mod$call[3])))) 
+  y = substr(mod_vars, 1, as.numeric(gregexpr(pattern = "~", mod_vars)) - 2)
+  x = substr(mod_vars, as.numeric(gregexpr(pattern = "~", mod_vars)) + 2, nchar(mod_vars))
+
+  data$pred = predict(mod)
+
+  if (x == "1" & is.null(x_var)) { 
+    x = "response_ID" 
+    data$response_ID = 1:nrow(data)
+} else if (x == "1") { 
+  x = x_var
+}
+
+  plot(data[, y] ~ data[, x], ylab = y, xlab = x) 
+  abline(mod)
+
+  for (i in 1:nrow(data)) { 
+    clip(min(data[, x]), max(data[, x]), min(data[i, c(y, "pred")]), max(data[i, c(y, "pred")])) 
+    abline(v = data[i, x], lty = 2, col = col)
+  } 
+  
+  }
+```
+
+
+
+```{r include = FALSE}
+# Re-coding the data
+# Errors were fixed such as, the occurrence of "woman" instead of "female" replaced by the right category, a negative income removed. 
+# No error found in data_surgeryB
+
+str(data_surgeryA)
+str(data_surgeryB)
+summary(data_surgeryA)
+summary
+
+sum(is.na(data_surgeryA))
+sum(is.na(data_surgeryB))
+
+data_surgeryA <- data_surgeryA %>% 
+  mutate(sex = as.factor(sex), 
+         hospital = as.factor(hospital),
+         sex = replace(sex, sex == "woman", "female")) %>% 
+ filter(!data_surgeryA$household_income < 0) %>% 
+  droplevels()
+
+
+data_surgeryB <- data_surgeryB %>% 
+  mutate(sex = as.factor(sex), 
+         hospital = as.factor(hospital))
+
+```
+
+# 1- Comprehensive results
+
+A mixed linear model (model 1) was fitted on a datatset (dataset A) including a sample of 199 patients whose information was collected prior and after their wisdom tooth surgery. The dataset originally included 200 observations, but a row containing an outlier (negative income) was removed. The outcome variable is the experienced post-operative pain self-assessed by patients five hours after their surgery (scale 0-10, where 0 means "no pain"). Six fixed predictors were included: age, sex, anxiety (measured with the State Trait Anxiety Inventory, on a scale of 20-80 where a higher  score means higher anxiety), the extent of pain catastrophising (measured on a scale from 0 to 52, where a higher score means higher catastrophising), the disposition to mindfulness (measured by the Mindful Attention Awareness Scale, also referred to as MAAS, on a scale from 1 to 6, where a higher score means a higher dispositional mindfulness), and the level of stress (measured through cortisol serum). In addition, the hospital where the surgery took place was added as a random-effect variable to take into account the clustering of the data (Figure 2). 
+
+The first model is a random intercept model, as it assumes that the fixed predictors have the same effects in the ten different hospitals. 
+
+```{r pain and sex plot}
+# Summary statistic plot
+data_surgeryA %>% 
+ggplot(aes(pain, colour = sex)) + 
+geom_density() +
+xlab("Experienced pain after surgery")
+```
+
+**Figure 1.**
+
+
+
+```{r plot average pain by hospital, include = TRUE} 
+data_surgeryA %>% 
+  ggplot(aes(x = hospital, y = pain, fill = hospital)) + 
+  geom_bar(stat = "summary", fun.y =" mean") +
+  geom_jitter() +
+  ggtitle("Mean experienced pain after surgery per hospital", "Data A") +
+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+
+```{r other plots socde}
+
+# Some plots to explore the variables and compare datasets A and B 
+
+# Age 
+data_surgeryA %>% 
+  ggplot(aes(y = age, x = "", fill = sex)) + 
+  geom_boxplot() + 
+  geom_jitter() +
+  ggtitle("Age by pain level", "Data A") +
+  facet_wrap(~pain)  # Age seems to play little role on pain level. The only noticeable differences, are for low level of pain (1) where men are older than women, and higher pain (8) where males are younger than females. 
+
+data_surgeryB %>% 
+  ggplot(aes(y = age, x = "", fill = sex)) + 
+  geom_boxplot() + 
+  geom_jitter() +
+  ggtitle("Age by pain level", "Data B") +
+  facet_wrap(~pain) # The distribution is slightly different than Data A, with patients experiencing level 0 of pain (female only). Age mean stays pretty much similar (40-45) except for pain level 8 where age mean is around 30-35.
+  
+
+# Income
+data_surgeryA %>% 
+  ggplot(aes(y = household_income, x = "", fill = sex)) + 
+  geom_boxplot() + 
+  geom_jitter() +
+  ggtitle("Income by pain level", "Data A") +
+  facet_wrap(~pain)
+
+data_surgeryB %>% 
+  ggplot(aes(y = household_income, x = "", fill = sex)) + 
+  geom_boxplot() + 
+  geom_jitter() +
+  ggtitle("Income by pain level", "Data B") +
+  facet_wrap(~pain)
+
+# IQ
+
+data_surgeryA %>% 
+  ggplot(aes(y = IQ, x = "", fill = sex)) + 
+  geom_boxplot() + 
+  geom_jitter() +
+  ggtitle("IQ by pain level", "Data A") +
+  facet_wrap(~pain)
+
+data_surgeryB %>% 
+  ggplot(aes(y = IQ, x = "", fill = sex)) + 
+  geom_boxplot() + 
+  geom_jitter() +
+   ggtitle("IQ by pain level", "Data A") +
+  facet_wrap(~pain)
+
+# Weight
+
+data_surgeryA %>% 
+  ggplot(aes(y = weight, x = "", fill = sex)) + 
+  geom_boxplot() + 
+  geom_jitter() +
+  ggtitle("Weight by pain level", "Data A") +
+  facet_wrap(~pain) # Pain level 7 and 8, lower male mean, weirdly male and femal seem to have a similar weight mean 
+
+data_surgeryB %>% 
+  ggplot(aes(y = weight, x = "", fill = sex)) + 
+  geom_boxplot() + 
+  geom_jitter() +
+   ggtitle("Weight by pain level", "Data B") +
+  facet_wrap(~pain) # A slightly lower mean for medium pain level (5-6) both for women and and men. Again a lower male weight for pain level 8. 
+
+
+```
+
+```{r other plots med}
+# Plots to explore pain predictors
+data_surgeryA %>% 
+  ggplot(aes(y = pain, x = STAI_trait)) + 
+  geom_point() + 
+  ggtitle("Effect of anxiety on pain by sex", "Data A") +
+  xlab("Anxiety measured by STAI trait (20-80)") +
+  ylab("Pain")+
+  facet_wrap(~sex) # Anxiety seems to have an effect for women but not for men. Women have a higher level of anxiety. 
+
+data_surgeryA %>% 
+  ggplot(aes(y = pain, x = pain_cat)) + 
+  geom_point() + 
+  ggtitle("Effect of pain catastrophizing on pain by sex", "Data A") +
+  xlab("Pain Catastrophizing scale (0-52)") +
+  ylab("Pain")+
+  facet_wrap(~sex)
+
+data_surgeryA %>% 
+  ggplot(aes(y = pain, x = mindfulness)) + 
+  geom_point() + 
+  ggtitle("Effect of mindfulness on pain by sex", "Data A") +
+  xlab("Mindful Attention Awareness Scale (1-6)") +
+  ylab("Pain")+
+  facet_wrap(~sex)
+
+data_surgeryA %>% 
+  ggplot(aes(y = pain, x = cortisol_serum)) + 
+  geom_point() + 
+  ggtitle("Effect of stress on pain by sex", "Data A") +
+  xlab("Serum Cortisol Level") +
+  ylab("Pain")+
+  facet_wrap(~sex)
+```
+
+**Figure 2. Clustering effect**
+
+
+```{r clustering effect, include = TRUE}
+# Is there a clustering effect?
+
+data_surgeryA %>% 
+  ggplot(aes(y = pain, x = cortisol_serum)) + 
+  geom_point(aes(colour = hospital)) + 
+  geom_smooth(method = "lm", se = F, fullrange = TRUE) + 
+  ggtitle("Effect of stress on pain", "Data A") +
+  xlab("Stress measured by serum cortisol ") +
+  ylab("Pain")
+
+
+
+data_surgeryA %>% 
+  ggplot(aes(y = pain, x = cortisol_serum, colour = hospital)) + 
+  geom_point() + 
+  geom_smooth(method = "lm", se = F, fullrange = TRUE) + 
+  ggtitle("Effect of stress on pain by hospital", "Data A") +
+  xlab("Stress measured by serum cortisol ") +
+  ylab("Pain")
+
+```
+
+
+```{r Linear Mixed Mehods on Data A}
+mod_rint <- lmer(pain ~ age +
+               sex +
+               STAI_trait +
+               pain_cat +
+               mindfulness +
+               cortisol_serum + 
+               (1 | hospital), 
+             data = data_surgeryA)
+
+summary(mod_rint)
+
+
+mod2 <- lm(pain ~ age +
+               sex +
+               STAI_trait +
+               pain_cat +
+               mindfulness +
+               cortisol_serum,
+             data = data_surgeryA)
+
+summary(mod2)
+
+```
+
+```{r other lms}
+modstai <- lm(pain ~ STAI_trait, 
+              data = data_surgeryA)
+
+summary(modstai)
+
+modstaib <- lm(pain ~ STAI_trait + 
+                 cortisol_serum, 
+              data = data_surgeryA)
+
+summary(modstaib)
+```
+
+## Assessing the model fit of the random intercept model
+
+```{r}
+residual_error <- sum(residuals(mod_rint)^2) # 222.1286
+CIA <- confint(mod_rint) # If the 95% CI does not contain 0, it means that the fixed effect term(s) explain a significant portion of the variation of the outcome compared to the mean (the null model)
+CIA 
+rint_AIC <- cAIC(mod_rint)
+stdb <- stdCoef.merMod(mod_rint) # A standardized beta coefficient compares the strength of the effect of each individual independent variable to the dependent variable. The higher the absolute value of the beta coefficient, the stronger the effect. Betas are calculated by subtracting the mean from the variable and dividing by its standard deviation. This results in standardized variables having a mean of zero and a standard deviation of 1.
+r2_mar <- r2beta(mod_rint, method = "nsj", data = data_surgeryA) #Marginal R squared stat. This is a special type of the R squared statistic that shows the proportion of variance explained by the fixed factor(s) alone, when not taking into account the random effect terms
+R2A <- r.squaredGLMM(mod_rint) # both conditional and the marginal r squared value
+
+stdb
+r2_mar
+R2A <- as.data.frame(R2A)
+
+
+
+
+```
+
+```{r table random intercept regression, results='asis', include = TRUE}
+class(mod_rint) <- "lmerMod"
+
+
+stargazer(mod_rint, 
+          type = "latex",
+          ci = TRUE, 
+          omit.stat = "all", 
+          add.lines = list(c("Conditional AIC", rint_AIC$caic), 
+                             c("Log Likelihood", rint_AIC$loglikelihood),
+                             c("df", rint_AIC$df),
+                             c("Marginal R2", R2A$R2m), 
+                             c("Conditional R2", R2A$R2c)),
+                     header = FALSE,
+                     column.labels=c("Random intercept Model 1"),
+                     star.cutoffs = c(0.05, 0.01, 0.001),
+                     dep.var.labels = "Post-operative pain",
+                     covariate.labels = c("Age", 
+                     "Sex",
+                                          "STAI scale",
+                                          "Pain catastrophising scale",
+                                          "MAAS",
+                                          "Serum cortisol", 
+                     "Hospital"),
+                     title = "Linear regression with hospital as a random intercept predictor",
+                     no.space = TRUE,
+                     out = "randomintercept.latex")
+
+```
+
+The marginal r-squared analysis shows that we reach a better proportion of variance explained with random effect variable hospital (marginal r-squared = 0.38, conditional r-squared 0.46)
+
+Both the sex variable and the STAI_strait variable seem to have weaker added predictive value. The fixed effect predictor "Sex"'s 95% confidence interval ranges between -0.102 and 0.53, which means we cannot exclude 0 or that it doesn't have an effect on the dependent variable pain (NULL hypothesis). The same is true for the STAI_trait (-0-.65, 0,017). This is consistent with the result of the regression where the p values of these two variables are not significant (Table 1). 
+
+The standardized beta coefficients (Table 2) confirm these results (sex = 0.07, STAI_trait = -0.79). The highest beta coefficient's absolute value is the cortisol serum (0.35). W
+
+
+
+```{r standard beta coef, results='asis', include = TRUE}
+stargazer(stdb, 
+          type = "latex", 
+          header = FALSE,
+          summary = FALSE, 
+          out = "standard beta.latex")
+```
+
+
+
+## Predictions for dataset b  
+To confirm the predicting value of our model, we test its ability to explain variance in another dataset. The explained variance is similar to the marginal r-squared in Model 1 (r-squared = 0.38). We conclude the random intercept model 
+
+```{r}
+predb <- predict(mod_rint, newdata = data_surgeryB,
+                 allow.new.levels = TRUE)
+
+data_surgeryB.withpred <- cbind(data_surgeryB, predb)
+data_surgeryB.withpred
+
+```
+
+```{r}
+RAD = sum(abs(data_surgeryB.withpred$pain - (data_surgeryB.withpred$predb)))
+RAD # Residual absolute difference (adds up all the residual error) = 200
+RSS = sum((data_surgeryB.withpred$pain - data_surgeryB.withpred$predb)^2)
+RSS # Residual sum of squared differences gives an indication of the total amount of error 306.8
+mod_mean = lm(pain~1, data = data_surgeryB.withpred)
+TSS = sum((data_surgeryB.withpred$pain - predict(mod_mean))^2)
+TSS # The total sum of squared differences for the mean model
+R2B = 1-(RSS/TSS) 
+R2B # We explain 38% of the variance with the predictors 
+```
+
+```{r plot predictions, include = TRUE}
+data_surgeryB %>% 
+  ggplot() + 
+  aes(y = pain, x = cortisol_serum) + 
+  geom_point() +
+  geom_point(data = data_surgeryB.withpred, aes(y = pain, x = predb), col = "red", size = 1) + geom_smooth(method = "lm", formula = "y ~ x", se = F) + 
+  ggtitle("Difference between observed and predicted values", "black = observations, red = predictions")
+
+```
+
+
+
+
+# 3- New model
+
+No prior data or theory was available about how the random effect of hospital might manifest itself, so we built two separate models. In one model we only allowed for a random intercept of hospitals, while in the other model we allowed for both random intercept and the random slope of the effect of chronic_stress across different classes. We compared the model fit of the random intercept and slope models using the anova() and cAIC() functions.  The conditional AIC of the random intercept model is smaller by more than 2, indicating a better fit (random intercept = 659, random slope and intercept = 671).
+
+
+```{r lm random intercept}
+# Intercept 2
+mod_rint2 <- lmer(pain ~ cortisol_serum + 
+               (1 | hospital), 
+             data = data_surgeryA)
+
+summary(mod_rint2)
+
+# Slope 1
+mod_rnd_slope <- lmer(pain ~ cortisol_serum + 
+               (cortisol_serum | hospital), 
+             data = data_surgeryA)
+
+summary(mod_rnd_slope)
+
+```
+
+**Figure 4. Random intercept model** 
+
+
+```{r visualisation random intercept, include=TRUE}
+# Visualisation intetcept 
+
+data_surgeryA <- data_surgeryA %>% 
+  mutate(pred_int2 = predict(mod_rint2))
+
+data_surgeryA %>% 
+ggplot() + 
+  aes(y = pain, x = cortisol_serum, group = hospital) +
+  geom_point(aes(color = hospital), size = 2) + 
+  geom_line(color = "red", aes(y = pred_int2, x = cortisol_serum)) + 
+  facet_wrap(~hospital, ncol = 2)
+
+```
+
+**Figure 5. Random slope model**
+
+
+
+```{r, include=TRUE}
+# Visualisation random slope
+
+data_surgeryA <- data_surgeryA %>% 
+  mutate(pred_slp = predict(mod_rnd_slope))
+
+data_surgeryA %>% 
+ggplot() + 
+  aes(y = pain, x = cortisol_serum, group = hospital) +
+  geom_point(aes(color = hospital), size = 2) + 
+  geom_line(color = "red", aes(y = pred_slp, x = cortisol_serum)) + 
+  facet_wrap(~hospital, ncol = 2)
+
+```
+
+
+```{r}
+residual_errorint <- sum(residuals(mod_rint2)^2) # 288.1828
+residual_errorslp <- sum(residuals(mod_rnd_slope)^2) # 281.9277
+CIA_int <- confint(mod_rint2) # If the 95% CI does not contain 0, it means that the fixed effect term(s) explain a significant portion of the variation of the outcome compared to the mean (the null model)
+CIA_slp <- confint(mod_rnd_slope)
+rint2_AIC <- cAIC(mod_rint2) # 659
+slp_AIC <- cAIC(mod_rnd_slope) # 671
+R2rint2 <- r.squaredGLMM(mod_rint2) # Condition R2 = 0.3268647
+R2slp <- r.squaredGLMM(mod_rnd_slope) # Condition R2 = 0.3458019
+
+
+R2rint2 <- as.data.frame(R2rint2)
+R2slp <- as.data.frame(R2slp)
+
+cAIC(mod_rint2)$caic
+cAIC(mod_rnd_slope)$caic
+anova(mod_rint2, mod_rnd_slope)
+
+
+```
+
+# 3- Discussion
+
+The low added predicted value by the STAI_trait variable could be explained by chronic stress (cortisol serum) being a confounding variable, causing both anxiety, and post-operative pain. While a simple linear regression with pain and anxiety (Model 2) shows a relation between State Trait Anxiety Inventory and pain (b = 0.056, p > 0.001, adjusted r2 = 0.03), the addition of the stress variable decreases its effect and significance (b = - 0.008, p > 0.05). 
+
+```{r results='asis', include = TRUE}
+stargazer(modstai, modstaib, 
+          header = FALSE, 
+          type = "latex",
+          column.labels = c("Model 2", "Model 3"), 
+          title = "Comparing the effects of anxiety and chronic stress", 
+          out = "lm.latex")
+```
+
+When using the model to predict pain in dataset B, the variance explained was similar to the variance explained by fixed predictors in dataset A (R2 dataset B = 0,38, Marginal R2 dataset A = 0,38). Random effect predictors are "nuisance variables" whose effects vary across individuals and samples and might introduce bias in our predction estimates. By adding hospitals as a random effect predictor in our regression equation, we suppressed the effects of these predictors on the outcome.  
+Although Figure 4. and Figure 5. don't show much difference between the random intercept and the random slope models, the conditional AIC of the random intercept model is smaller by more than 2, indicating a better fit (random intercept = 659, random slope and intercept = 671). This means that the chronic stress' effect on post-surgery pain doesn't vary across hospitals. 

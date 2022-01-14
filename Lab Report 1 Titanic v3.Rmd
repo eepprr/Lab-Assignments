@@ -1,0 +1,590 @@
+---
+output:
+  pdf_document: default
+---
+output: pdf_document: 
+fig_caption: true
+latex_engine: pdflatex
+title: "Lab Assignment 1 - Titanic"
+author: "Elise Perrault"
+date: "2021/12/08"
+geometry: margin=2.5cm
+fontsize: 11pt
+spacing: 1.5cm 
+mainfont: Times New Roman
+---setwd("G:/My Drive/Cours/SIMM61/Lab 2")
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set( warning = FALSE, message = FALSE, cache = TRUE, echo = FALSE, include = FALSE)
+
+```
+ 
+
+```{r setup2}
+
+library("pscl")
+library("lmtest")
+library("dominanceanalysis")
+library("scales")
+library("stargazer")
+library("knitr")
+library("tidyverse")
+library("dplyr")
+
+setwd("G:/My Drive/Cours/SIMM61/Lab 2/Logistic regression")
+
+data_titanic <- read.csv(file = "Titanic - training set.csv")
+
+```
+
+# Lab Assignment 1 - Titanic
+
+# 1. Introduction
+On April 15th, 1912, the RMS Titanic ship sank after colliding with an iceberg in the North Atlantic Ocean. The ship was on the course of its first journey from Southampton, United Kingdom, to New York City, USA. The lack of lifeboat on board resulted in the death of 1,500 of the 2,224 Titanic passengers. Our expertise was required by the court in a trial opposing passenger and survivor Sue, against her father Leonardo who deliberately missed the departure of the ship, leaving Sue and her mother Kate alone on the boat. By examining a dataset containing passengers' information, our analysis attempted to predict Sue’s and Kate’s chances of survival, and whether the absence of Leonardo played a significant role in Kate’s death.
+
+We built a statistical model with 80.5% overall predictive accuracy taking into consideration five predictors: ticket fare paid by the passenger, sex, age, number of accompanying siblings and spouses, number of accompanying parents and children. The model shows that the presence of Leo on board would not have increased the probability of survival of Kate and her daughter, if not worsened it. Male passengers’ chances of survival overall seem to be lower than for female passengers, especially for “Class 3” passengers (the lowest fare). This is consistent with the idea that women and first class passengers were prioritized during the evacuation.
+
+```{r Exploratory analysis}
+  head(data_titanic)
+  summary(data_titanic)  
+  str(data_titanic)
+  class(col(data_titanic))
+```
+
+```{r Tidying}
+
+# We need to change some of these variables into factor variables, and the sex column into a dummy variable. We also create a children variable to distinguish from children and parents in the Parhc variable 
+# Nas are dropped
+
+my_titanic <- data_titanic %>% 
+  mutate(Survived = as.factor(Survived), 
+         Pclass = as.factor(Pclass), 
+         Embarked = as.factor(Embarked),
+         Children = as.factor(ifelse(Age < 18, "1", "0")),
+         Sex = as.factor(recode(Sex, "female" = "1", 
+                         "male" = "0"))) %>%
+                         drop_na
+str(my_titanic)
+levels(my_titanic$Survived) #Not survived is the reference level 
+```
+
+# 2. Methods
+We conduct a binomial logistic regression analysis where survival (Survived) is the dependent variable (“Did not survive” is the reference level. The model includes five predictors: number of parents and children (“Parch”), number of siblings or spouses (“Sibsp”), age, sex (male is the reference level), and ticket class (“Pclass” with three levels: 1st, 2nd, 3rd).
+
+A preliminary analysis of passengers’ data seem to indicate that sex and ticket class significantly affect chances of survival. 75% of female passengers survived, whereas 80% of male passengers died (Table 1). On the other hand, while 65.6% of Class 1 passengers survived, this number drops to 48% for Class 2 passengers, and 23% for Class 3 passengers, suggesting a negative relation between class and survival (Table 2.).
+
+In addition, the three other predictors will help us predict the chances of survival for Kate and Sue, allowing us to precise their age, and the presence or absence of Leo.
+
+```{r table 0}
+# Percentage by class 
+my_titanic %>% 
+group_by(Pclass) %>% 
+summarise(count = n()) %>% mutate(freq = count / sum(count))
+
+#Children 
+child_survival <- my_titanic %>% 
+group_by(Children, Survived) %>% 
+summarise(count = n()) %>% 
+mutate(freq = count / sum(count),
+Children = case_when(Children == 1 ~ "< 18", 
+Children == 0 ~ "> 18"), 
+Survived = case_when(Survived == 0 ~ "Did not survive", 
+Survived == 1 ~ "Survived")) %>% 
+rename("Age" = "Children")
+
+child_survival <- child_survival %>%
+mutate(Percentage = percent(freq, accuracy = 0.001)) %>% 
+subset(select = -freq)
+```
+
+
+```{r table 1, results='asis', include=TRUE}
+# Percentage of gender
+sex_survival <- my_titanic %>% 
+group_by(Sex, Survived) %>% 
+summarise(count = n()) %>% 
+mutate(freq = count / sum(count), 
+Sex = case_when(Sex == 1 ~ "Female", 
+Sex == 0 ~ "Male"), 
+Survived = case_when(Survived == 0 ~ "Did not survive", 
+Survived == 1 ~ "Survived"))
+
+sex_survival <- sex_survival %>%
+mutate(Percentage = percent(freq, accuracy = 0.01)) %>% 
+subset(select = -freq)
+
+stargazer(sex_survival,
+          header = FALSE, 
+type ="latex", 
+summary = FALSE,
+rownames = FALSE, 
+title = "Survival by sex",
+out = "sex table.latex")
+
+```
+```{r table2, results='asis', include = TRUE}
+# percentage of survival
+class_survival <- my_titanic %>% 
+group_by(Pclass, Survived) %>% 
+summarise(count = n()) %>% 
+mutate(freq = count / sum(count),
+Pclass = case_when(Pclass == 1 ~ "Class 1", 
+Pclass == 2 ~ "Class 2",
+Pclass == 3 ~ "Class 3"), 
+Survived = case_when(Survived == 0 ~ "Did not survive", 
+Survived == 1 ~ "Survived")) %>% 
+rename("Ticket Fare" = "Pclass")
+
+class_survival <- class_survival %>%
+mutate(Percentage = percent(freq, accuracy = 0.01)) %>% 
+subset(select = -freq)
+
+
+stargazer(class_survival, 
+          header = FALSE,
+type ="latex",
+summary = FALSE,
+rownames = FALSE,
+title = "Survival by ticket fare",
+out = "class table.latex")
+```
+
+
+```{r plots 1}
+# Useful plots
+
+my_titanic %>% 
+ggplot(mapping = aes(x = Survived, y = Sex, color = Pclass)) +
+  geom_jitter(width = .2) +
+                     scale_fill_discrete(labels = c("Class 1", "Class 2", "Class 3")) +
+                     ggtitle("Survival, Sex, and class distribution")
+                     
+                     
+
+my_titanic %>%
+ggplot(aes(x = SibSp, fill = Survived)) +
+geom_bar() + 
+facet_wrap(~ Survived) + 
+xlab("Number of siblings and spouse") + 
+scale_fill_discrete(labels = c("Did not survive", "Survived")) +
+                     ggtitle("Survival and number of siblings and spouse")
+                     
+
+my_titanic %>%
+ggplot(aes(x = Parch, fill = Survived)) +
+geom_bar() + 
+facet_wrap(~ Survived) + 
+xlab("Number of parents or children") + 
+scale_fill_discrete(labels = c("Did not survive", "Survived")) +
+                     ggtitle("Survival and number of parents and children")
+                 
+```
+
+
+```{r plots 2}
+ my_titanic %>%
+  ggplot() +
+  aes(x = Survived, fill = Sex) + 
+  geom_bar()+
+  scale_x_discrete(labels=c("Did not survive", "Survived")) + 
+                     scale_fill_discrete(labels = c("Male", "Female")) + 
+                     ggtitle("Passenger's survival by sex")
+                     
+                     
+my_titanic %>%
+  ggplot() +
+  aes(x = Survived, fill = Children) + 
+  geom_bar()+
+  scale_x_discrete(labels=c("Did not survive", "Survived")) + 
+                     scale_fill_discrete(labels = c("Child", "Adult")) + 
+                     ggtitle("Passenger's survival: Children vs. Adults")
+                     
+
+
+my_titanic %>%
+  ggplot() +
+  aes(x = Survived, fill = Pclass) +
+  geom_bar() + 
+  scale_x_discrete(labels=c("Did not survive", "Survived")) + 
+                     scale_fill_discrete(labels = c("Class 1", "Class 2", "Class 3")) + 
+                     ggtitle("Passenger's survival by ticket's class")
+                    
+  
+
+  
+my_titanic %>%
+  ggplot(mapping = aes(y = Survived, x = SibSp)) +
+  geom_jitter(width = .2) + 
+  geom_violin()
+  
+
+my_titanic %>%
+  ggplot(mapping = aes(x = Survived, y = Parch, color = Children)) +
+  geom_jitter(width = .2) + 
+  scale_x_discrete(labels=c("Did not survive", "Survived")) + 
+                     scale_fill_discrete(labels = c("Children", "Adult", "N/A"))
+  
+
+
+my_titanic %>% 
+ggplot(mapping = aes(x = Survived, y = Age, color = Pclass)) +
+  geom_jitter(width = .2) +
+  scale_x_discrete(labels=c("Did not survive", "Survived")) + 
+                     scale_fill_discrete(labels = c("Class 1", "Class 2", "Class 3"))
+                     
+
+my_titanic %>% 
+ggplot(mapping = aes(x = Survived, y = Sex, color = SibSp)) +
+  geom_jitter(width = .2) +
+  scale_x_discrete(labels=c("Did not survive", "Survived")) + 
+                     scale_fill_discrete(labels = c("Male", "Female"))
+                     
+                     
+
+
+
+```
+
+
+
+
+```{r Bivariate regressions }
+# 
+
+#1. Parents
+mod1a <- glm(Survived ~ Parch,
+            family = binomial,
+            data = my_titanic)
+
+summary(mod1a) 
+# Intercept -0,4, so if Parch = 0, Survived = -0,47 (0.6208039 odds) : So not having a parent  chances of dying are 0.6208039 (!double check it's the right level of reference)
+# Having a parent is positively correlated with death (?), as an increase in 1 parent equals an increase in log(odd) 0.22 or 1.246276 odds of not surviving. 
+exp(0.22016)
+exp(-0.47674)
+
+exp(predict(mod1a))
+
+pR2(mod1a) # 6.358640e-03  -- the proportion of explained variance
+AIC(mod1a) # 962.383
+pR2(mod1a)["llh"]* -2   #958.383 -- it shows the amount of error left after accounting for all of the variance explained by the predictors in our model, and that the lower this number the better the model fit is. 
+
+
+#2. Siblings and spouse
+mod1b <- glm(Survived ~ SibSp,
+            family = binomial,
+            data = my_titanic)
+
+summary(mod1b)
+exp(-0.36030)
+exp(-0.03840)
+
+# When SibSp = 0, Y = -0,36
+# Siblings and spouse is positively correlated with Survival, an increase in 1 spouse or sibling decreases log(odd) of survival by -0,03, or 0.9 the chances of survival which is slightly less than for parents. The effect of having a parent is higher than having a spouse or a sibling.  
+
+
+exp(predict(mod1b))
+
+pR2(mod1b) # 2.244157e-04 -- the proportion of explained variance is lower
+AIC(mod1b) # 968.2995
+pR2(mod1b)["llh"]* -2   #964.2995 -- a higher number --  it shows the amount of error left after accounting for all of the variance explained by the predictors in our model, and that the lower this number the better the model fit is. 
+
+
+
+#3. Sex
+mod1c <- glm(Survived ~ Sex,
+            family = binomial,
+            data = my_titanic)
+
+summary(mod1c)
+#11.9 odds of surviving if female. Intercept at log(odds) -1.35, or 0.2 so being a male sex has 0.2 chances of survival. 
+
+
+exp(predict(mod1c))
+exp(-1.3535)
+exp(2.4778)
+
+pR2(mod1c) # 0.2216819 --- a much higher coefficient -- the proportion of explained variance
+AIC(mod1c) # 754, 7
+pR2(mod1c)["llh"]* -2   #750.7002 --- a lower number so the model with sex is much more able to predict the variation -- it shows the amount of error left after accounting for all of the variance explained by the predictors in our model, and that the lower this number the better the model fit is. 
+
+
+# 4. Class
+mod1d <- glm(Survived ~ Pclass,
+            family = binomial,
+            data = my_titanic)
+
+summary(mod1d)
+exp(0.6451) # Class 1 = 1.9 chances of survival
+exp(-0.7261) # Class 2 = 0.48 chances of survival
+exp(-1.8009) # Class 3 = 0.16 chances of survival
+
+# Class level has a positive effect on survival as the higher the class the higher the chances of survival
+
+exp(predict(mod1d))
+
+pR2(mod1d) # 0.09818988 --- lower than sex but higher than the others  -- the proportion of explained variance
+AIC(mod1d) # 875.8103
+pR2(mod1d)["llh"]* -2   #869.8103 -- it shows the amount of error left after accounting for all of the variance explained by the predictors in our model, and that the lower this number the better the model fit is. 
+
+
+# 5. Age
+mod1e <- glm(Survived ~ Age,
+            family = binomial,
+            data = my_titanic)
+
+summary(mod1e)
+exp(-0.01096) # When age increases by 1, 
+
+exp(predict(mod1e))
+
+pR2(mod1e) # 4.445297e-03  -- the proportion of explained variance
+AIC(mod1e) # 964.2284
+pR2(mod1e)["llh"]* -2   #960.2284  -- it shows the amount of error left after accounting for all of the variance explained by the predictors in our model, and that the lower this number the better the model fit is
+
+```
+
+The logistic regression model with the five predictors has a significantly better model fit than the null model (Chiˆ2 = 328.06, df = 7, p < 0, AIC of the model = 650.4597, -2LL of the model = 636.4597), while the null model's AIC = 966.52, -2LL of the null model = 964.516. The model explains 34% of the variance (McFadden Rˆ2 = 0.34). 
+
+Death ("Did not survived") occurred in 59.4% of the cases in our sample (424 out of 891 individuals). The overall correct prediction rate is 80.5% for our model, compared to 59% for the null model. The greater accuracy of our model is again confirmed by looking at the prediction accuracy by category. The final model correctly predicts the presence of survival in 73% of the cases, and the absence of survival in 85% of the cases in our sample, while the null model predictions are 100% accurate for "did not survive" and 0% accurate for "survived". 
+```{r Multivariate model}
+
+mod2 <- glm(Survived ~ Parch + 
+            SibSp + 
+            Age + 
+            Sex + 
+            Pclass, 
+            family = binomial,
+            data = my_titanic)
+
+summary(mod2)
+
+exp(predict(mod2))
+
+
+
+#We test the relevance of the model
+
+pR2(mod2) # Mc Fadden 0.3401253 -- an increase by the proportion of explained variance
+AIC(mod2) # 650.4597
+pR2(mod2)["llh"]* -2  # 636.4597 -- it shows the amount of error left after accounting for all of the variance explained by the predictors in our model, and that the lower this number the better the model fit is. 
+
+#OR 
+mod2_OR <- glm(Survived ~ Parch + 
+            SibSp + 
+            Age + 
+            Sex + 
+            Pclass, 
+            family = binomial,
+            data = my_titanic)
+mod2_OR$coefficients <- exp(mod2_OR$coefficients)
+
+```
+
+```{r model table, results='asis', include = TRUE}
+stargazer(mod2, mod2_OR, 
+                     type = "latex",
+                     header = FALSE,
+                     ci=c(FALSE,TRUE),
+                     column.labels=c("coefficients","odds ratio"),
+                     star.cutoffs = c(0.05, 0.01, 0.001),
+                     intercept.bottom = FALSE,
+                     dep.var.labels = "Survived",
+                     covariate.labels = c("Constant", 
+                     "Nb. of parents and children",
+                                          "Nb. of siblings or spouses",
+                                          "Age",
+                                          "Sex: Female",
+                                          "Ticket Fare: Class 2",
+                                          "Ticket Fare: Class 3"),
+                     title = "Logistic Regression Results",
+                      t.auto = FALSE, 
+                     p.auto = FALSE,
+                     report = "vcts*",
+                     keep.stat = c("n", "aic", "ll", "f"),
+                     no.space = TRUE,
+                     out = "models.latex")
+                    
+```
+
+```{r classification}
+# Nous retenons le model 2
+# Model performance model 2
+
+confint(mod2)
+
+# percentage of did not survived
+my_titanic %>% 
+  group_by(Survived) %>% 
+  summarise(count = n()) %>% 
+  mutate(freq = count / sum(count))
+
+# We evaluate our overall prediction = 80.5% correct 
+
+my_titanic = my_titanic %>% 
+mutate(pred_mod2 = predict(mod2)) %>% 
+mutate(pred_mod2 = case_when(pred_mod2 <= 0 ~"0", 
+pred_mod2 > 0 ~"1"))
+
+# We compare our model prediction with the actual results 
+
+# Coding corect guesses
+my_titanic = my_titanic %>% 
+mutate(correct_prediction1 = case_when(pred_mod2 == Survived ~ "correct",
+pred_mod2 != Survived ~ "incorrect"))
+
+# Correct categorization rate overall = 80% OK!
+predict_overall <- my_titanic %>% 
+group_by(correct_prediction1) %>% 
+summarise(count = n()) %>% 
+mutate("Overall proportion" = count / sum(count))
+
+# correctly categorized as Survived
+predict_survived <- my_titanic %>% filter(Survived == "1") %>% group_by(correct_prediction1) %>% summarise(count = n()) %>% mutate(freq = count / sum(count)) #73% Correct = Ok!
+
+# Correctly categorized as did not survived
+predict_nsurvived <- my_titanic %>% filter(Survived == "0") %>% group_by(correct_prediction1) %>% summarise(count = n()) %>% mutate(freq = count / sum(count)) #85% Not Correcrt = ok!
+
+
+
+
+
+```
+
+```{r  model evauation}
+#We evaluate how accurate the model is by comparing with the null model which uses the mean of the outcome variable as the prediction. 
+mod_null = glm(Survived ~1, family = binomial(), data = my_titanic)
+
+summary(mod_null)
+head(predict(mod_null))
+
+pR2(mod_null) 
+AIC(mod_null) 
+pR2(mod_null)["llh"]* -2  
+
+# The NULL model is overall 59.4% correct at predicting. Our model is significantly better. 
+
+my_titanic = my_titanic %>% 
+mutate(pred_modnull = predict(mod_null)) %>% 
+mutate(pred_modnull = case_when(pred_modnull <= 0 ~"0", 
+pred_modnull > 0 ~"1"))
+
+# We compare our model prediction with the actual results 
+
+# Coding corect guesses
+my_titanic = my_titanic %>% 
+mutate(correct_prediction0 = case_when(pred_modnull == Survived ~ "correct",
+pred_modnull != Survived ~ "incorrect"))
+
+# Correct categorization rate overall - by contrast the accuracy of the null model is of 60%
+my_titanic %>% 
+group_by(correct_prediction0) %>% 
+summarise(count = n()) %>% 
+mutate(freq = count / sum(count))
+
+# correctly categorized as Survived
+my_titanic %>% filter(Survived == "1") %>% group_by(correct_prediction0) %>% summarise(count = n()) %>% mutate(freq = count / sum(count)) #73% Correct = Ok!
+
+# Correctly categorized as did not survived
+my_titanic %>% filter(Survived == "0") %>% group_by(correct_prediction0) %>% summarise(count = n()) %>% mutate(freq = count / sum(count))
+
+
+#Our model with the predictors is significantly more acurate than the null model: 80% correct, instead of 59% correct.
+
+
+```
+
+```{r significance}
+# Significance 
+lrtest(mod_null, mod2) #Is mod2 significant, and does it have a higher log likelihood. The mod2 has -318 log likelihood while the null model has -482
+
+AIC(mod_null, mod2) # The AIC is at least 2 points higher which means we can reject the NULL hypothesis 
+
+# -2LL
+pR2(mod2)["llh"] * -2
+pR2(mod_null)["llh"] * -2
+```
+
+
+## Dominance analysis 
+The dominance analysis shows that the variable "Sex" conditionally dominates all the other variables as its average additional contribution is greater than that of all the other predictors across all levels. The "class" variable corresponding to the ticket fare of the passengers also contributes to a large extent to the explained variance, although less than the "Sex" variable. It seems consistent with the idea suggested above that female passengers, and passengers of class 1, have greater chances of survival, thus "sex" and "ticket" fare influence chances of survival. On the other hand, it seems like the accompanying family (both sibsp and Parch variables), and the age, play a lesser role. This is also visible in the confidence intervals, where the estimates for the Parch variable range from -0.03 to 0.19 so we cannot infer that that there are significantly different than zero, and therefore that the predictor has an added predicted value in the model. 
+```{r coef}
+# Interpreting the coefficient results
+summary(mod2)
+# the coef estimates predict the log(odds) of the event of interest (the level that is not the event of interest)
+confint(mod2)
+
+```
+
+```{r dominance, include = TRUE}
+# relative contribution of predictors to the mode
+
+dominance_mod2<-dominanceAnalysis(mod2)
+contributionByLevel(dominance_mod2, fit.functions="r2.m")
+plot(dominance_mod2, which.graph ="conditional",fit.function = "r2.m")
+averageContribution(dominance_mod2,fit.functions = "r2.m")
+plot(dominance_mod2, which.graph ="general",fit.function = "r2.m") + coord_flip()
+```
+
+
+## Regression analysis 
+
+The regression equation of the model used is **Y = 1.714 + -0.038607 * Parch + -0.368280 * SibSp + -0.44836 * Age + 2.642267 * Female + -1.415376 * Pclass2 + -2.650169 * Pclass2**
+
+## Predicted probability of survival
+The model predicts that Kate's probability of survival is almost ten points greater without her husband on board (0.683 against 0.593). Sue's probability of survival marginally higher too (o.809 with Leo and 0.815 without Leo). Our model shows that the presence of Leo on board would most likely not have impacted Kate's death. 
+
+```{r proba}
+# Kate probabilities  
+Kate <- with(my_titanic, data.frame(Parch = 1, SibSp = 1, Age = 20, Sex = "1", Pclass = "3"))
+Kateb <-with(my_titanic, data.frame(Parch = 1, SibSp = 0, Age = 20, Sex = "1", Pclass = "3"))
+
+Kate
+Kateb
+
+
+Kate$WithLeo <- predict(mod2, newdata = Kate, type = "response")
+Kate$WithoutLeo <- predict(mod2, newdata = Kateb, type = "response")
+
+Kate
+
+Sue <- with(my_titanic, data.frame(Parch = 2, SibSp = 0, Age = 4, Sex = "1", Pclass = "3"))
+Sueb <- with(my_titanic, data.frame(Parch = 1, SibSp = 0, Age = 4, Sex = "1", Pclass = "3"))
+
+Sue$WithLeo <- predict(mod2, newdata = Sue, type = "response")
+Sue$WithoutLeo <- predict(mod2, newdata = Sueb, type = "response")
+
+Sue
+
+Prob <- rbind(Kate, Sue)
+Prob <- Prob %>% 
+mutate(Passenger = c("Kate", "Sue"), .before = Parch, 
+WithLeo = percent(WithLeo, accuracy = 0.01), 
+WithoutLeo = percent(WithoutLeo, accuracy = 0.01)) %>% 
+select("Passenger", "WithLeo", "WithoutLeo")
+
+```
+
+
+```{r prob table, results='asis', include = TRUE }
+stargazer(Prob, 
+type = "latex",
+summary=rep(F,length(Prob)),
+header= FALSE,
+title = "Probability of survival with or without Leo", 
+column.labels = c("Passenger", "With Leo", "Without Leo"))
+```
+
+
+
+# 3. Discussion 
+The analysis shows that the presence of Leo on board with Kate and Sue would not have increased their chances of survival. In the case of Kate even, the model predicts lesser chances of survival when Leo is present. This could be explained by the fact that female, and first class passengers were given the priority during the evacuation of the ship. For Kate, the decrease in chances of survival from 68% without Leo, to 59% with him, could be explained by the fact that when families travelling with a man realised he could not follow them onto the evacuation lifeboats decided - or were forced - to stay together as the Titanic was sinking. We could also assume that in the confusion, women and children hesitating or saying goodbye, lost their place on the lifeboats.
+In any case, the presence of a family member whether it is a spouse, a sibling, a parent, or a child, are less significant predictors than sex and the class of passengers. Both the sibsp and the parch variable have very little average contributions to the predictive ability of the model (respectively 0.005, and 0.004, compared to 0.207 for sex). 
+
+
+
+
+
+
+
+
+

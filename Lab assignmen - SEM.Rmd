@@ -1,0 +1,223 @@
+---
+title: "Lab Assignment 4 - Mental Health"
+author: Elise Perrault
+date: 14/01/2022
+output: pdf_document
+fontsize: 12pt
+mainfont: Times New Roman
+    
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, cache = TRUE, echo = FALSE, include = FALSE)
+```
+
+```{r setup 2}
+library(psychTools)	
+library(lavaan) # for SEM fit and model functions	
+library(semPlot) # for semPaths()	
+library(semptools) # for set_sem_layout	
+library(tidyverse) # for tidy code	
+library(CompQuadForm) # for mvnorm.kur.test and mvnorm.skew.test (prerequisite)	
+library(ICS) # for mvnorm.kur.test and mvnorm.skew.test	
+library(dplyr)
+library(semTable)
+
+setwd("G:/My Drive/Cours/SIMM61/Lab 2/Structure equation modelling")
+
+my_data = holzinger.swineford
+
+drop_na(my_data)
+```
+
+```{r exploring data}
+str(my_data)
+```
+# Introduction 
+We are testing a theoretical model about the mental health test scores of seventh and eith grade children from two different schools. Our theoretical assumptions are: 
+
+1. Visual perception ability is a latent factor that influences (causally determines) test scores measured by t01_visperc, t02_cubes, t03_frmbord, and t04_lozenges, which are all related to visual perception and mental rotation.
+2. Verbal ability is a latent factor that influences (causally determines) test scores measured by t06_paracomp, t07_sentcomp, and t09_wordmean.
+3. Processing speed is a latent factor that influences (causally determines) test scores measured by t10_addition t12_countdot, and t13_sccaps.
+
+The three latent variables are correlated. 
+
+In this assignment we will analyse the fit of the observed data to this theoretical model using structural equation modelling. Two models are built, one without any correlation between the manifest parameters (Model A), and one with correlation between variables t10 and t12. 
+
+
+# 1. Task 1, Model A
+The first model (Model A) contains 3 latent variable loading, a Causal relationship where visual perception ability (vis_ab), verbal abiloty (verb_ab), and processing speed (mov_sp) are latent variables. 
+In addition, the includes three correlational relationships between these three latent variables. 
+
+
+
+```{r Model A specify a structural equation model}
+modA <- '	
+  # measurement model	
+    vis_ab =~ t01_visperc + t02_cubes + t03_frmbord + t04_lozenges	
+    verb_ab =~ t06_paracomp + t07_sentcomp + t09_wordmean
+    mov_sp =~ t10_addition + t12_countdot + t13_sccaps 	
+  # residual correlations	
+    vis_ab ~~ verb_ab	
+    vis_ab ~~ mov_sp 	
+    mov_sp ~~ verb_ab'
+
+fitA <- sem(modA, data = my_data) 
+   
+```
+
+## Characteristics of the model 
+
+**Manifest variables = 10** 
+
+**Number of possible parameters: 55** 
+
+**Number of free parameters : 23**
+
+* latent factor loadings: 7 
+* covariance = 3 
+* residuals = 10
+* variance = 3
+
+The degrees of freedom for our model 55-23 = 32 (df>0), confirming the the model is "identified" and can be run with the fit function. 
+
+### Multivariate normality assumption test
+```{r, echo = FALSE, include = TRUE}
+# We test the mL assumption and whether the data comes from a multivariate normal distribution
+mvnorm.kur.test(na.omit(my_data[,8:33])) 
+mvnorm.skew.test(na.omit(my_data[,8:33])) 
+```
+
+The  data violates the multivariate normal distribution assumption of the Maximum Likelihood estimator. Both the Kurtosis and skewness tests indicate significant p-values. We will use "MLM" estimator which uses robust estimates instead. 
+```{r Model A checking assumption}
+# df 
+part <- 10*(10+1)/2 #number of all possible parameters of the manifest variables
+parf <- 7 + 3 + 10 + 3 # Nb of free parameters 
+df = part-parf # = 29
+  
+  # If the assumption of normality is violated, the standard errors are usually too large, and the p-values are not reliable. Furthermore, the model fit tends to be overestimated (the fit indexis are unreliable). In this case, normality-adjusted robust standard errors are used and correction to the model fit indices. 
+fitA <- sem(modA, data = my_data, estimator = "MLM")
+```
+
+### Model A plot
+```{r model outputs, echo = FALSE, include = TRUE}
+plotA_std <- semPaths(fitA, whatLabels = "std", residuals = T) # with standardized estimates
+
+```
+
+### Model A summary
+```{r, echo = FALSE, include = TRUE}
+summary(fitA, fit.measures = T)
+```
+
+
+## Assessing the fit of the model 
+Despite a non significant chi-squared, the model has a poor fit, as shown by the goodness and badness fit indexes below. 
+
+**Goodness of fit statistics:**
+
+* Tucker-Lewis Index (TLI) = 0.917
+* Comparative Fit Index (CFI)  = 0.941 
+
+**Badness of fit statistics:**
+
+* Root mean squared error of approximation (RMSEA) > 0.06 = overall = 0.75, with confidence intertval = 0.56-0.95 
+* Chi-squared is not significant (0)
+
+```{r interpreting }
+# Model fit
+summary(fitA, fit.measures = T)
+
+# Estimates: regression coeff (Latent va loasdings section)
+# covar section: Covariance is a measure of the joint variability of two variables. It is similar to correlation in the sense that if the two variables are correlated positively, the covariance is also positive. This unstandardized estimate is usually not interpreted directly beyond its sign (positive or negative)
+# Variance section : Residuals are marked with a “.” The unstandardized residuals are interpreted as the variance of the residual error in the dependent variables in linear regression. The smaller this variance is the better the model fit, and the more accurate the model is at predicting the given variable. Variances show the variance of the exogenous-only variable.
+
+standardizedsolution(fitA, type = "std.all")
+```
+
+# 2. Task 2, Model B 
+Model B seems to have a better fit than model A. The chi-square-change-test shows that this model has a lower chi-squared (Model A = 8296, Model B = 8267). 
+
+The other indicators also show a comparatively better fit. 
+
+**Goodness of fit statistics:** 
+
+* Tucker-Lewis Index (TLI) = 0.958
+* Comparative Fit Index (CFI) = 0.971 
+
+**Badness of fit statistics:**
+
+* Root mean squared error of approximation (RMSEA) = 0.51 overall, with confidence interval of 0.27-0.73. 
+
+```{r Model B}
+modB <- '	
+  # measurement model	
+    vis_ab =~ t01_visperc + t02_cubes + t03_frmbord + t04_lozenges	
+    verb_ab =~ t06_paracomp + t07_sentcomp + t09_wordmean
+    mov_sp =~ t10_addition + t12_countdot + t13_sccaps 	
+  # residual correlations	
+    t10_addition ~~ t12_countdot
+    vis_ab ~~ verb_ab	
+    vis_ab ~~ mov_sp 	
+    mov_sp ~~ verb_ab'
+
+
+fitB <- sem(modB, data = my_data, estimator = "MLM")
+```
+
+### Chi-square change test
+```{r Comparing Model A and B, include = TRUE}
+anova <- anova(fitA, fitB)
+
+anova
+```
+
+### Model Summary
+```{r Comparing Model , include = TRUE}
+summary(fitB, fit.measures = T)
+```
+
+
+The unstandardized estimates show that the variable t02_cubes is the least influenced by the Visual perception ability latent variable (standardized estimate = 0,75).
+
+### Model B plot
+```{r plot, include =TRUE}
+plotB_std <- semPaths(fitB, whatLabels = "std", residuals = T) # with standardized estimates
+```
+
+
+# 3. Task 3
+
+It seems that t01 affects t013 both directly (0,31), and indirectly through t12 (0,23*0,38). We can expect that with an increased by 1 unit in t01, the value of t13 would change by 0.3974. 
+
+```{r Model C}
+
+
+modc <- 't13_sccaps~c*t01_visperc+b*t12_countdot
+t12_countdot ~ a*t01_visperc
+
+# Indirect effect (a*b)
+            indirect:=a*b
+# total effect
+            total : = c + (a*b)
+
+'
+
+fit_path_example = sem(modc, data = my_data, estimator = "MLM")
+
+semPaths(fit_path_example, whatLabels = "std", residuals = T)
+
+summary(fit_path_example)
+
+parTable(fit_path_example)
+
+# df 
+partc <- 3*(3+1)/2 #number of all possible parameters of the manifest variables
+parfc <- 3 + 1 + 2 # Nb of free parameters 
+dfc = partc-parfc # = 29
+
+# Mediation 
+0.31 + (0.23*0.38)
+```
+

@@ -1,0 +1,575 @@
+---
+title: "Lab Assignement 3 - Animal Right Scale"
+author: "Elise Perrault"
+date: "14/01/2022"
+output: pdf_document
+fontsize: 12pt
+mainfont: Times New Roman
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, cache = TRUE, echo = FALSE, include = FALSE)
+```
+
+```{r}
+#Packages
+library(dplyr)
+library(car) # for vif
+library(GGally) # for ggcorr	
+library(corrr) # network_plot	
+library(ggcorrplot) # for ggcorrplot	
+library(FactoMineR) # multiple PCA functions	
+library(factoextra) # visualisation functions for PCA (e.g. fviz_pca_var)	
+library(paran) # for paran	
+	
+library(psych) # for the mixedCor, cortest.bartlett, KMO, fa functions	
+library(GPArotation) # for the psych fa function to have the required rotation functionalities	
+library(MVN) # for mvn function	
+library(ICS) # for multivariate skew and kurtosis test	
+library(tidyverse) # for tidy code	
+library(stargazer)
+
+```
+
+```{r custom function}
+# Custom function for pcs and efa
+fviz_loadnings_with_cor <- function(mod, axes = 1, loadings_above = 0.4){	
+  require(factoextra)	
+  require(dplyr)	
+  require(ggplot2)	
+	
+	
+	
+if(!is.na(as.character(mod$call$call)[1])){	
+  if(as.character(mod$call$call)[1] == "PCA"){	
+  contrib_and_cov = as.data.frame(rbind(mod[["var"]][["contrib"]], mod[["var"]][["cor"]]))	
+	
+vars = rownames(mod[["var"]][["contrib"]])	
+attribute_type = rep(c("contribution","correlation"), each = length(vars))	
+contrib_and_cov = cbind(contrib_and_cov, attribute_type)	
+contrib_and_cov	
+	
+plot_data = cbind(as.data.frame(cbind(contrib_and_cov[contrib_and_cov[,"attribute_type"] == "contribution",axes], contrib_and_cov[contrib_and_cov[,"attribute_type"] == "correlation",axes])), vars)	
+names(plot_data) = c("contribution", "correlation", "vars")	
+	
+plot_data = plot_data %>% 	
+  mutate(correlation = round(correlation, 2))	
+	
+plot = plot_data %>% 	
+  ggplot() +	
+  aes(x = reorder(vars, contribution), y = contribution, gradient = correlation, label = correlation)+	
+  geom_col(aes(fill = correlation)) +	
+  geom_hline(yintercept = mean(plot_data$contribution), col = "red", lty = "dashed") + scale_fill_gradient2() +	
+  xlab("variable") +	
+  coord_flip() +	
+  geom_label(color = "black", fontface = "bold", position = position_dodge(0.5))	
+	
+	
+}	
+} else if(!is.na(as.character(mod$Call)[1])){	
+  	
+  if(as.character(mod$Call)[1] == "fa"){	
+    loadings_table = mod$loadings %>% 	
+      matrix(ncol = ncol(mod$loadings)) %>% 	
+      as_tibble() %>% 	
+      mutate(variable = mod$loadings %>% rownames()) %>% 	
+      gather(factor, loading, -variable) %>% 	
+      mutate(sign = if_else(loading >= 0, "positive", "negative"))	
+  	
+  if(!is.null(loadings_above)){	
+    loadings_table[abs(loadings_table[,"loading"]) < loadings_above,"loading"] = NA	
+    loadings_table = loadings_table[!is.na(loadings_table[,"loading"]),]	
+  }	
+  	
+  if(!is.null(axes)){	
+  	
+  loadings_table = loadings_table %>% 	
+     filter(factor == paste0("V",axes))	
+  }	
+  	
+  	
+  plot = loadings_table %>% 	
+      ggplot() +	
+      aes(y = loading %>% abs(), x = reorder(variable, abs(loading)), fill = loading, label =       round(loading, 2)) +	
+      geom_col(position = "dodge") +	
+      scale_fill_gradient2() +	
+      coord_flip() +	
+      geom_label(color = "black", fill = "white", fontface = "bold", position = position_dodge(0.5)) +	
+      facet_wrap(~factor) +	
+      labs(y = "Loading strength", x = "Variable")	
+  }	
+}	
+	
+	
+	
+	
+	
+	
+return(plot)	
+	
+}	
+```
+
+# 1- Introduction 
+This assignment explores the factor structure of the Animal Rights Scale, a scale containing 28 items to measure attitudes toward animal experimentation and animal rights. The goal is to use this scale to study how attitudes toward animal rights is correlated with liberal of conservative identity. 
+The factor analysis identifies two latent factors: attitudes towards animal use and consumption, and attitudes towards research and testing on animals. 
+The results of the linear regression are not significant, indicating no association between these factors and the socio-political values of the participants. The results are limited by the low average communality of the factor structure (0,40 instead of 0,60).  
+
+```{r load dataset}
+#load dataset
+setwd("G:/My Drive/Cours/SIMM61/Lab 2/Dimension reduction techniques")
+ARS <- read.csv("animalrights.csv")
+```
+
+```{r explore and tidy}
+#Explore and clean data
+describe(ARS)
+str(ARS)
+summary(ARS)
+
+ARS <- drop_na(ARS)
+````
+
+# 2- Comprehensive results 
+The dataset includes observations on 149 participants, as well as 31 variables. They include the Animal Right Scale, 28 statements regarding animal rights and experimentation that participants had to rate from 1 to 5, 1 being "strongly disagree", and 5 "strongly agree". 
+
+
+**Figure 1. Correlation structure**
+```{r}
+# We test the collinearity (must be below 3)
+ARS_mod_all <- lm(liberal ~ ar1 + ar2 + ar3 + ar4 + ar5 + ar6 + ar7 + ar8 + ar9 + ar10 + ar11 + ar12 + ar13 + ar14 + ar15 + ar16 + ar17 + ar17 + ar18 + ar19 + ar20 + ar21 + ar22 + ar23 + ar24 + ar25 + ar27 + ar28, data = ARS)
+
+
+
+ARS_items_only = ARS %>% 	
+                  dplyr::select(ar1:ar28)	
+	
+ARScor = ARS_items_only %>% 	
+  cor()	
+	
+ARScor	
+	
+vif(ARS_mod_all)	
+
+```
+
+```{r corplot, include = TRUE}
+# Visualisation to decide whether we should remove some var 
+ggcorr(ARScor)
+```
+
+An analysis of the correlation matrix shows two clusters of variables: statements framed positively, and statements framed negatively towards animal rights and experimentation. The latter is smaller and includes statements such as "God put animals on Earth for man to use" (ar 16), "New surgical procedures and experimental drugs should be tested on animals before they are used on people" (ar 19), as well as ar 21 "Since many important questions cannot be answered by doing experiments on people, we are left with no alternatives but to do animal research", 24 "It is appropriate for humans to kill animals that destroy human property, for example, rats, mice, and pigeons", and 28 "Hunters play an important role in regulating the size of deer populations". 
+
+Surprisingly, ar 18 "Research on animals has little or no bearing on problems confronting people", a negatively framed statement, is also positively correlated with many statements, including the positively framed ones. 
+
+In addition, the collinearity (VIF) test run on a multivariate linear regression shows a potentially problematic collinearity. All but one vifs are below 3. The variable Ar 5 "It is wrong to wear leather jackets and pants." has a VIF of 5.3, indicating the relevance of dimension reduction.  
+
+
+```{r}
+# Visualisation to decide wheher we should remove some var 
+ggcorr(ARScor)
+ggcorrplot(cor(ARS_items_only), p.mat = cor_pmat(ARS_items_only), hc.order = TRUE, type = "lower")
+```
+## Factorability 
+We test the factorability of the data, which indicates whether there is enough correlation between the observed variables to proceed with the explorative factor analysis. The Bartkett sphericity test gives a p-value of 8.088717e-76. The significant results shows that the matrices are significantly different from each other, so the observed variables are factorable. 
+
+In our case, we have a small sample where the ratio of observations and observed variables is below 5 (149 / 31 = 4.8). We can conclude that the Bartlett sphericity test is reliable. 
+
+These results are nevertheless confirmed by the Kaiser-Meyer-Olkin (KMO) test. All the variables have a KMO index comprised between 0.6 and 1, and the total KMO is also higher than 0.6 (0.87). 
+
+```{r}
+# Factorability 
+# A. Correlation matrix of data
+ARScor
+
+# B. Bartlett sphericity test
+# The idea behind the Bartlett test is to copare the actual observed correlation matrix of the observed variables with a hypothetical null-correlation matrix, where every correlation is set to 0 (this is also called the identity matrix). We test the null hypothesis that the two correlation maricies don’t differ from each other. So if the test is significant, we can say that the two matrices are significantly different from each other, that is, that the observed variables correlate with each other. This means that the observed variables are factorable.
+
+#However, there is a serious drawback to using the Bartlett’s test: that with large enough samples this test almost always returns significant results. So even though people tend to report this test, they do not consider this as a definitive indicator of factorability. The only time we should take the result of this test seriously is when the ratio of the number of observatiosn and the number of observed variables is lower than 5. In our case this value is about 149/31 = 4.8, so the Bartlett’s test is reliable.
+ARS.BST <- cortest.bartlett(ARScor)
+ARS.BST
+
+# C. Kaiser-Meyer-Olkin (KMO) test
+# The KMO test compares the partial correlation matrix with the regular correlation matrix. In the partial correlation matrix we calculate the correlation of every pair of observed variables if we take out the effect of every other observed variable from this correlation. In cases where the variables hold a lot of common variance, (there is a large chance that they are governed by the same latent factors) partial correlations are low, so the KMO index will be large > good factorability between 0.6 - 1. As close to 1 as possible 
+ARS.KMO <- KMO(ARScor)
+ARS.KMO
+
+```
+## Factor extraction method
+All three multivariate normality tests (Henze Zirkler, Kurdosis, and Skewness) give p-values lower than 0.5 (0, < 7.732e-11, 3.331e-16), indicating a violation of the multivariate normality assumption. 
+
+**Principal Axis Factoring is preferred over Maximum likelihood Estimation as an extraction method.** 
+```{r}
+
+#  First we determin which extraction method is the best by looking at whether the data sgows a multivariate normal distribution. If the p-value of these tests is lower than 0.05, it indicates the violation of the multivariate normality
+mvn.result <- mvn(ARS[, 1:28], mvnTest = "hz")
+mvn.result
+mvnorm.kur.test(na.omit(ARS[, 1:28])) 
+mvnorm.skew.test(na.omit(ARS[, 1:28]))
+
+```
+
+
+
+## Exploratory factor analysis 
+The ideal factor sets suggested by the different techniques are the following:
+* scree test: 4
+* Parallel test: 4
+* VSS: 1-2 
+* MAP: 2
+
+The most recurring numbers are 4 and 2 factors. 
+
+```{r scree, include = TRUE }
+# Decide the right number of factors with scree test or parallel test
+# The scree plot shows the eigenvalue of each dimension connected by a line. The scree test is a visual analysis of the scree plot that starts with finding the “elbow” in the line. This is the point where the eigenvalues seem to level off, where no more substantial break can be seen in the slope of the line. Components to the left of this point should be retained. This does not include the last break point, so everything before that point is retained, and every other dimension, including the one which represents the final breaking point, is excluded.
+scree <- VSS.scree(ARScor) 
+
+
+par <- fa.parallel(ARScor, n.obs = nrow(ARS), fa = "fa", fm = "pa") #4
+
+```
+
+
+
+```{r}
+#VSS and MAP criterion
+nfactors(ARScor, n.obs = nrow(ARS))
+```
+
+
+A comparison between three models with 1, 2, and 4 factors, shows that while the cumulative variance explained slightly increases when adding factors, it is unclear whether this can be attributed to a greater ability to explain variance, or the simple addition of a new factor. 
+
+In addition, according to MacCallum et al., if the number of observers is below 250 like in our dataset,  the average communality of the items should be at least 0.6. In our case the average communality is below 0.6 in the three models. 
+
+### Figure 2. Comparison betwee three models (1): 1 Factor, 2 Factors, 3 Factors
+
+
+```{r}
+# Factor analysis with all the variables 
+
+#Factor extraction : 1
+EFA_mod1 <- fa(ARScor, nfactors = 1, fm = "pa") 
+EFA_mod1_common <- as.data.frame(sort(EFA_mod1$communality, decreasing = TRUE))
+EFA_mod1_common
+mean_mod1 <- mean(EFA_mod1$communality) # 
+
+#Factor extraction : 2
+EFA_mod2 <- fa(ARScor, nfactors = 2, fm = "pa") 
+EFA_mod2_common <- as.data.frame(sort(EFA_mod2$communality, decreasing = TRUE))
+EFA_mod2_common
+mean_mod2 <- mean(EFA_mod2$communality) #0.3431796
+
+
+#Factor extraction : 4
+EFA_mod4 <- fa(ARScor, nfactors = 4, fm = "pa") 
+EFA_mod4_common <- as.data.frame(sort(EFA_mod4$communality, decreasing = TRUE))
+EFA_mod4_common
+mean_mod4 <- mean(EFA_mod4$communality) # 0.4118955
+
+converted <- as.data.frame(unclass(EFA_mod4$loadings))
+
+
+table <- as.matrix(cbind(EFA_mod1$communality, EFA_mod2$communality,  EFA_mod4$communality))
+colnames(table) <- c("1 factor", "2 factors", "4 factors")
+row.names(table) <- rownames(as.data.frame(EFA_mod1$communality))
+
+means <- as.matrix(cbind(mean_mod1, mean_mod2,  mean_mod4))
+colnames(means) <- c("1 factor", "2 factors", "4 factors")
+
+```
+
+
+
+```{r, results='asis', include = TRUE}
+stargazer(means, 
+          header = FALSE,
+          type = "latex", 
+          title = "Comparison of average communality (28 items)", 
+          out = "means1.latex")
+```
+
+
+To overcome this, three new models are built removing the weaker items (ar 3, ar 8, ar 14, ar16, ar 18, ar 28). The average communality of the three models increases slightly, although it stays below the 0.6 threshold (Table 2.).
+
+The model with a reduced number of items is preferred. In order to improve the interpretability of the factors, and based on the assumption that the factors are correlated as demonstrated by the correlation matrix, we choose to rotate the factors obliquely. 
+
+Looking at the factor matrices (Figure 2.) The model with two factors groups variables related to animal consumption (clothing, food, etc) together (PA1), while variables related to research and animal testing are grouped in the second factor. This suggests that respondents have different attitudes towards animal consumption, and experimentation on animals, which could possibly affect differently how conservative or liberal they are. 
+
+The four factor model's PA1 and PA2 have a similar structure, while the third factor (PA3) gathers variables corresponding to negative statements, which would suggest respondents have answered positive and negative questions inconsistently, or in other words, that a high score to a positive statement (e.g ar 5 "It is wrong to wear leather jackets and pants") does not necessarily lead to a low score to a negative statement (e.g ar 19 "New surgical procedures and experimental drugs should be tested on animals before they are used on people"). The fourth factor is difficult to interpret and the variables' regression coefficients are lower than for other factors. 
+
+
+**Because of the marginal increase in average communalities when adding factors, and a better ability to theoretically make sense of the factors, we decide to use the model with two factors and 20 items.** 
+
+
+  
+
+```{r}
+#We do this again without items ar ar1, 3, 8, 11, 14, 16, 18, 28)
+ARS_selected <- ARS_items_only %>% 
+  dplyr::select(ar1, 
+         ar2, 
+         ar4, 
+         ar5, 
+         ar6, 
+         ar7, 
+         ar9, 
+         ar10,
+         ar11,
+         ar12, 
+         ar13,
+         ar15,
+         ar17, 
+         ar19, 
+         ar20, 
+         ar21, 
+         ar22, 
+         ar23,
+         ar24,
+         ar25, 
+         ar26, 
+         ar27)
+
+
+ARScor.s <- cor(ARS_selected)
+
+# Factor analysis with all the variables 
+
+#Factor extraction : 1
+EFA_mod1.s <- fa(ARScor.s, nfactors = 1, fm = "pa") #How many factors do we want to extract?
+EFA_mod1.s_common <- as.data.frame(sort(EFA_mod1.s$communality, decreasing = TRUE))
+EFA_mod1.s_common
+mean_mod1.s <- mean(EFA_mod1.s$communality) # 
+
+#Factor extraction : 2
+EFA_mod2.s <- fa(ARScor.s, nfactors = 2, fm = "pa") #How many factors do we want to extract?
+EFA_mod2.s_common<- as.data.frame(sort(EFA_mod2.s$communality, decreasing = TRUE))
+EFA_mod2.s_common
+mean_mod2.s <- mean(EFA_mod2.s$communality) #0.3431796
+
+
+#Factor extraction : 4
+EFA_mod4.s <- fa(ARScor.s, nfactors = 4, fm = "pa") #How many factors do we want to extract?
+EFA_mod4_common.s <- as.data.frame(sort(EFA_mod4.s$communality, decreasing = TRUE))
+EFA_mod4_common.s
+mean_mod4.s <- mean(EFA_mod4.s$communality) # 0.4118955
+
+
+table.s <- as.matrix(cbind(EFA_mod1.s$communality, EFA_mod2.s$communality,  EFA_mod4.s$communality))
+colnames(table.s) <- c("1 factor", "2 factors", "4 factors")
+row.names(table.s) <- rownames(as.data.frame(EFA_mod1.s$communality))
+
+
+
+means.s <- as.matrix(cbind(mean_mod1.s, mean_mod2.s, mean_mod4.s))
+stargazer(means.s, 
+          type = "html", 
+          Title = "Cumulative variance", 
+          out = "cvar.html")
+
+colnames(means.s) <- c("1 factor", "2 factors", "4 factors")
+
+```
+
+
+```{r, results='asis', include = TRUE}
+stargazer(means.s, 
+          type = "latex",
+          header = FALSE,
+          title = "Comparison of average communality (20 items)",
+          column.labels = c("1 Factor", "2 Factors", "3 Factors"),
+          out = "means1.latex")
+```
+ 
+
+```{r}
+# Rotation with 2 factors
+EFA_mod_promax2 <- fa(ARScor.s, nfactors = 2, fm = "pa", rotate = "promax")
+EFA_modp_com2 <- as.data.frame(sort(EFA_mod_promax2$communality, decreasing = TRUE))
+EFA_modp_com2
+meanp.2 <- mean(EFA_mod_promax2$communality)
+
+# Rotation with 4 factors
+EFA_mod_promax4 <- fa(ARScor.s, nfactors = 4, fm = "pa", rotate = "promax")
+EFA_modp_com4 <- as.data.frame(sort(EFA_mod_promax4$communality, decreasing = TRUE))
+EFA_modp_com4
+mean(EFA_mod_promax4$communality)
+
+
+```
+
+
+
+```{r}
+# Final model 
+
+
+
+f.table <- as.matrix(cbind(EFA_mod_promax2$loadings, EFA_mod_promax2$e.values, EFA_mod_promax2$communality))
+colnames(f.table) <- c( "Loadings F1", "Loadings F2", "Eignevalues", "Communality")
+f.table <- f.table[order(f.table[,4], decreasing = TRUE),]
+
+
+str(EFA_mod_promax2)
+
+result.t <- as.matrix(EFA_mod_promax2$Vaccounted)
+
+SSloadingsPA1 <- result.t[1,1]
+propvarPA1 <- result.t[2,1]
+cumvarPA1 <- result.t[3,1]
+SSloadingsPA2 <- result.t[1,2]
+propvarPA2 <- result.t[2,2]
+cumvarPA2 <- result.t[3,2]
+
+
+```
+
+```{r}
+# Factor interpretation with the pattern matrix 
+#The pattern matrix accounts for this shared variance by using a regression coefficient instead of the correlation coefficient, this way, the meaning of the loadings in that table is the portion of the variance of an observed variable explained uniquely by the given factor, while taking into account the variance explained by all other factors. While the structure matrix contains simple correlation coefficients, which does not take into account the variance explained by the other factors.
+#The interpretation of the factors is usually done by looking at which items have high loadings on a given factor, and figuring out from this information what could that factor mean
+# Looking at the pattern matrix 
+EFA_mod_promax2
+EFA_mod_promax4
+EFA_mod2.s_common
+EFA_mod4_common.s
+
+fa.diagram(EFA_mod_promax2)
+fa.diagram(EFA_mod_promax4)
+fviz_loadnings_with_cor(EFA_mod_promax2, axes = 1, loadings_above = 0.4)
+fviz_loadnings_with_cor(EFA_mod_promax2, axes = 2, loadings_above = 0.4)
+
+fa.diagram(EFA_mod_promax4)
+fviz_loadnings_with_cor(EFA_mod_promax4, axes = 1, loadings_above = 0.4)
+fviz_loadnings_with_cor(EFA_mod_promax4, axes = 2, loadings_above = 0.4)
+fviz_loadnings_with_cor(EFA_mod_promax4, axes = 3, loadings_above = 0.4)
+fviz_loadnings_with_cor(EFA_mod_promax4, axes = 4, loadings_above = 0.4)
+
+
+```
+ 
+### Comparison between factor matrices for the models with 2 and 4 factors (20 items)
+```{r factor matrix, include = TRUE}
+fa.diagram(EFA_mod_promax2)
+fa.diagram(EFA_mod_promax4)
+```
+
+### Final factor structure
+```{r, results='asis', include = TRUE}
+stargazer(f.table, 
+          type = "latex",
+          header = FALSE, 
+          add.lines = list(c("SS loadings PA1", SSloadingsPA1),
+                           c("Variance explained PA1", propvarPA1),
+                           c("Cumulative variance PA1", cumvarPA1),
+                           c("SS loadings PA2", SSloadingsPA2),
+                           c("Variance explained PA2", propvarPA2),
+                           c("Cumulative variance PA2", cumvarPA2),
+                           c("Average Communality", meanp.2)),
+          title = "Post-extraction values (20 items, oblique rotation)")
+
+stargazer(result.t,
+          type = "latex",
+          header = FALSE,
+          title = "Post-extraction values (20 items, , oblique rotation)")
+
+stargazer(meanp.2,
+          header = FALSE,
+          type = "latex", 
+          title = "Average communality (20 items, , oblique rotation)")
+                           
+```
+
+
+## Linear regression with the final factor structure
+```{r}
+# Final factor structure
+ARS_reduced <- ARS %>% 
+dplyr:: select(ar1, 
+         ar2, 
+         ar4, 
+         ar5, 
+         ar6, 
+         ar7, 
+         ar9, 
+         ar10,
+         ar11,
+         ar12, 
+         ar13,
+         ar15,
+         ar17, 
+         ar19, 
+         ar20, 
+         ar21, 
+         ar22, 
+         ar23,
+         ar24,
+         ar25, 
+         ar26, 
+         ar27, 
+         sex, 
+         party, 
+         liberal)
+
+factorscores <- factor.scores(ARS_reduced[, 1:22], EFA_mod_promax2)$scores
+ARS_withfactorscores = cbind(ARS_reduced, factorscores)
+ARS_withfactorscores <- ARS_withfactorscores %>% 
+mutate(Animaluse = PA1,  
+           Animaltesting = PA2) %>% 
+  
+dplyr:: select(ar1, 
+         ar2, 
+         ar4, 
+         ar5, 
+         ar6, 
+         ar7, 
+         ar9, 
+         ar10,
+         ar11,
+         ar12, 
+         ar13,
+         ar15,
+         ar17, 
+         ar19, 
+         ar20, 
+         ar21, 
+         ar22, 
+         ar23,
+         ar24,
+         ar25, 
+         ar26, 
+         ar27, 
+         sex, 
+         party, 
+         liberal, 
+         Animaluse,
+         Animaltesting)
+
+  
+```
+
+```{r}
+#Linear regression 
+lib_mod1 <- lm(liberal ~ Animaluse +
+                 Animaltesting + 
+                 sex, 
+                data = ARS_withfactorscores)
+
+summary(lib_mod1)
+```
+
+
+
+# 3- Discussion
+The three independent variables, Animal use, Animal testing, and Sex,  return non-significant p-values in this linear regression. We cannot conclude that thereis any significant associations between the participants' socio-political values, their sex, and their attitudes towards animal experimentation and animal rights. The small sample (149 observations), and the small average communality in the explorative factor analysis, most likely play a role in our inability to get significant results. 
+
+
+```{r, results='asis', include = TRUE}
+stargazer(lib_mod1, 
+          header = FALSE, 
+          title = "Linear regression with two factors extracted from the Animal Right Scale", 
+          type = "latex", 
+          out = "final model.latex")
+```
+
