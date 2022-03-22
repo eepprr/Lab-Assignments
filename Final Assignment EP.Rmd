@@ -1,0 +1,596 @@
+---
+title: "SIMP56 SNA Assignment"
+author: "Elise Perrault"
+date: "3/16/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set( warning = FALSE, message = FALSE, cache = TRUE, echo = TRUE, include = TRUE, results = 'hide', out.width = '1000%')
+
+```
+ 
+
+# PART A 
+
+```{r Set up}
+setwd("C:/Users/elise/OneDrive/Documents/21-22 Master/Course 3 Using Social theory/Part C Social networks/Final Assignment")
+
+library(readxl)
+library(network)
+library(intergraph)
+library(igraph)
+library(sna)
+library(RColorBrewer)
+library(ggplot2)
+library(devtools)
+library(dplyr)
+
+
+klubbdata_edges <- read.csv("klubbdata_edges.csv")
+klubbdata_nodes <- read.csv("klubbdata_nodes.csv")
+
+
+```
+
+
+**1) Is the newtork directed or undirected**
+
+The edge list shows that there is no mutual tie, so we can assume that the network is undirected. 
+
+```{r adjacency, results='hide'}
+# Knowing the network is undirected we can create the following addjacency matrix
+klubbdata_adj <- get.adjacency(graph.edgelist(as.matrix(klubbdata_edges), directed=FALSE)) %>% 
+  as.matrix(klubbdata_adj)
+
+klubbdata_adj - t(klubbdata_adj)
+
+# Network
+klubbdata_net <- network(klubbdata_adj, directed = FALSE)
+
+# Convert network into igraph 
+klubbdata_net_igraph <- asIgraph(klubbdata_net)
+```
+
+
+**2) How many actors and ties are there?** 
+There are 78 edges and 34 nodes
+```{r summary}
+nrow(klubbdata_edges) # 78
+N <- nrow(klubbdata_nodes) # 34
+```
+**3) What is the density of the network?**
+The density of the network is 0.139
+
+**4) What is the average degree of the network? **
+The average degree of the network is 4.588235
+
+```{r Network measures}
+# Density 
+density <- gden(klubbdata_net, mode = "graph") #0.1390374
+
+# Average degree (N-1*density)
+(N-1)*density # 4.58823
+
+mean(degree(klubbdata_net))/2
+```
+
+
+**5. What is the average shortest path of the network?**  
+The average shortest path is 2.4082
+```{r shortest path}
+average.path.length(klubbdata_net_igraph)
+```
+
+
+**6. Who are the 2 most central characters in this network?** 
+The two most central nodes are nodes 34 and 1 who have the highest degree centrality value, which means there are the most connected nodes.
+```{r centrality2, echo=TRUE, include = TRUE}
+
+degree <- as.data.frame(c(1:34))
+degree <- degree %>% 
+  mutate(degree =  degree(klubbdata_net, gmode="graph", cmode="undirected")) %>% 
+  arrange(desc(degree))
+
+
+```
+
+```{r, results='asis'}
+
+degree <- degree[1:2,]
+```
+
+
+**7. Are there different communities in the network (use Louvain algorithm)? Describe and visualise the results. Report correlation with actual club membership.**
+
+There are four communities in the network according to Louvain algorithm with each faction being divided into two subgroups. The Louvain algorithm seems to follow a similar pattern as the actual club membership as members of faction one and faction two are not blended, except for one individual in faction two who end up in the green community (see graph below). 
+
+```{r Communities, results='asis'}
+
+plot(klubbdata_net, displaylabels=TRUE)
+is.connected(klubbdata_net)
+components(klubbdata_net)
+component.dist(klubbdata_net)
+
+
+
+# Run the Louvain community detection algorithm
+comm <- cluster_louvain(klubbdata_net_igraph, weights=NULL)
+
+# The number of communities
+length(comm) #4
+
+# The size distribution by community is
+sizes(comm)
+
+# We can check whether the community object is hierarchical
+is_hierarchical(comm)
+
+klubbdata_net_igraph.comm <- comm$membership
+
+```
+
+```{r comm, include = FALSE, echo=FALSE}
+class(comm)
+
+# The object generated stores the community membership by node
+comm$membership  # Also with function membership(comm)
+
+
+# The optimal modularity score can be retrieved by (for directed -1 to 1; undirected -0.2 to +1 ???)
+modularity(comm)
+```
+
+```{r, echo=TRUE, results='asis'}
+# Create a new dataset with faction and community membership
+
+klubbdata_memb <- klubbdata_nodes %>% 
+  mutate(membership = klubbdata_net_igraph.comm)
+
+# New igraph 
+klubbdata_net_igraph2 <- klubbdata_net_igraph
+
+# Plot
+klubbdata_net_igraph2.attr <- vertex.attributes(klubbdata_net_igraph2)
+klubbdata_net_igraph2_labels <- klubbdata_net_igraph2.attr$vertex.names
+
+# If you want to see the colors of palettes use command: display.brewer.all()
+# We choose option Accent
+colors <- brewer.pal(length(comm), 'Accent')
+
+
+# Assign each node a color based on the community membership
+V(klubbdata_net_igraph2)$color <- colors[membership(comm)] 
+
+set.seed(3) # output varies by seed. By setting the seed we fix the graph output  
+plot(klubbdata_net_igraph2, 
+     vertex.label=klubbdata_memb$faction,
+     main = "Comparison of faction (1-2) and community (color) membership")
+```
+
+
+```{r Correlation, eval=FALSE, include=FALSE, echo=FALSE}
+
+# Is there a correlation between being in the same community and being in the military
+
+
+lm_mod <- lm(membership ~ faction, 
+             data = klubbdata_memb)
+
+options(scipen=10)
+summary(lm_mod)
+
+
+
+# You can investigate the correlation with the assortativity coefficient. The assortativity coefficient measures the level of homophyly of the graph, based on some vertex labeling or values assigned to vertices. If the coefficient is high, that means that connected vertices tend to have the same labels or similar assigned values.  
+
+
+```
+
+
+**8. Perform clustering based on edge betweenness (use cut-off to 2 clusters). How well do the clustering results match with the actual club membership? Report correlation and create a network visualisation that shows both to which cluster and club actors belong to.**
+
+There is a high correlation (-0.9, p < 0) between faction and cluster membership which indicates that the clustering function is accurate with actual membership. The plot shows that members of the same faction belong to the same cluster. Like for question 7, we see that this holds true except for one individual (node 3).
+
+```{r Clustering}
+kd_cluster <- cluster_edge_betweenness(klubbdata_net_igraph)
+
+
+# Lists node membership in identified clusters (reports cluster number)
+membership(kd_cluster)
+
+# Divide nodes into 2 clusters based on the above clustering results
+kd_2clusters <- cut_at(kd_cluster, no = 2)
+
+
+klubbdata_memb <- klubbdata_memb %>%
+  mutate(clusters = as.factor(kd_2clusters), 
+         factions = as.factor(faction))
+
+```
+
+```{r Cluster visualisation, include=TRUE, echo=TRUE, results='asis'}
+set.seed(3) # output varies by seed. By setting the seed we fix the graph output 
+
+label_vector <- klubbdata_memb$faction
+
+palette(c("#61E8E1", "#F2E863"))
+
+gplot(klubbdata_net, 
+      gmode = "graph",
+      vertex.col = kd_2clusters,
+     object.scale = 0.02,
+     vertex.border = FALSE,
+      edge.col = "#F7A072",
+      displaylabels = TRUE, 
+     label = label_vector,
+      label.cex = 0.6, 
+      label.col = "#8D8E8E",
+     main = "Comparison of faction (1-2) and cluster (color) membership")
+
+```
+
+
+```{r chi, echo=TRUE, include=TRUE, results='asis'}
+
+kd_2clusters <- as.numeric(kd_2clusters)
+
+# Chi-square
+
+# Correlation
+cor(kd_2clusters, klubbdata_memb$faction)
+
+```
+
+
+## Star Wars
+
+
+```{r Set up the Star Wars package, results='hide'}
+
+library(movienetdata) 
+
+data("starwars_tfa", "movienetdata") 
+
+data(package = "movienetdata") 
+
+force(starwars_tfa)
+
+
+library(network) 
+
+starwars_tfa
+starwars_tfa$node_list
+starwars_tfa$adjacency
+
+
+starwars_net <- network(starwars_tfa$adjacency)
+starwars_net_igraph <- asIgraph(starwars_net)
+
+```
+
+**9. Is the network directed or undirected?**
+The network is directed and weighted since the connectedness (number of lines spoken by the character  to another character) is not symetrical. It is also weighted. 
+
+**10. How many actors and ties there are?** 
+There are 31 actors and 149 ties
+```{r Exploring the network, results='hide'}
+
+starwars_tfa$adjacency - t(starwars_tfa$adjacency)
+
+
+
+# Numbers
+N2 <- network.size(starwars_net)
+network.edgecount(starwars_net)
+
+# Convert network into igraph
+starwars_igraph <- asIgraph(starwars_net)
+```
+
+**11. What is the density of the network?**
+The density of the network is 0.1602151
+
+```{r Density}
+density2 <- gden(starwars_net, mode="digraph")
+```
+
+**12. What is the average degree of the network?**
+The average degree of the network is 9.612903
+
+```{r Average degree}
+mean(degree(starwars_net))
+```
+
+
+**13. What is the average shortest path of the network?**
+The average shortest path is 2.297
+```{r Average shortest path}
+average.path.length(starwars_igraph)
+```
+
+**14. Who are the 3 most important characters in this movie?** 
+The 3 most important characters in the movie are Poe Dameron, Han Solan, Finn. 
+```{r centrality, include=TRUE, echo=TRUE, results='asis'}
+
+# Degree centrality: to find very connected, popular individuals, individuals  who are likely to hold most information or individuals who can quickly connect with the wider network
+
+# Betweeness centrality: For finding the individuals who influence the flow around a system
+
+
+
+starwars_df <- data.frame(actors=rep(network.vertex.names(starwars_net)),
+                            degree=rep(degree(starwars_net)), 
+                         betweeness = rep(betweenness(starwars_net, gmode="igraph", cmode="directed")), 
+                         closeness = rep(igraph::closeness(starwars_net_igraph, mode="total"))) 
+
+                         
+
+starwars_df <- starwars_df %>% arrange(desc(degree))
+
+starwars_df <- starwars_df[1:3,]
+
+starwars_df
+
+
+degree <- degree(starwars_net)
+
+```
+
+
+**15. Who does Rey interact with in the movie?** 
+Rey interacts with: 
+
+Kylo Ren				
+Finn			
+Unkar			
+Han Solo			
+Maz Kanata			
+Leia Organa
+
+
+```{r Rey, inlcude=TRUE, echo=TRUE}
+Rey <- as.sociomatrix(starwars_net)
+
+Rey <- as.data.frame(Rey) %>%
+  select(Rey) %>% 
+  filter(Rey == 1)
+
+Rey <- head(Rey)
+  
+```
+```{r table1, results='asis'}
+
+library(stargazer)
+
+stargazer(Rey, 
+          type = "latex", 
+          summary = FALSE, 
+          title = "Rey's interactions")
+
+```
+
+**16. Visualise the network so that node size depends on some centrality measure and node colour corresponds to the sex of the character.**
+
+```{r, include = TRUE, results='asis'}
+sw_nodelist <- starwars_tfa$node_list
+sw_sex <- sw_nodelist$char_female
+sw_sex <- as.factor(sw_sex)
+
+palette(c("#61E8E1", "#F2E863"))
+
+gplot(starwars_net, 
+      vertex.cex = degree, 
+      vertex.col = sw_sex, 
+      object.scale = 0.001, 
+      arrowhead.cex = 3, 
+      vertex.border = FALSE, 
+      edge.col = "#F7A072", 
+      displaylabels = TRUE, 
+      label.cex = 0.6, 
+      label.col = "#8D8E8E", 
+      xlab = "Social Network of Star Wars Characters (Blue = Male, Yellow = Female)")
+```
+
+
+**17) Briefly compare the two networks to other real-life networks (use the examples from the last slide in Lecture 2).** 
+Our Star Wars network is significantly smaller than other film real-life network (31 nodes and 149 ties compared to 449 913 nodes and 255 16482) which could be explained by the fact that our dataset focuses on the main characters instead of the whole cast (it doesn't include extras for instance). Both networks have a similar average degree (4.5 for klubbdata, and 5.8 for starwars) which means that nodes have a relatively small number of connections. These figures are closer to other social undirected networks such as math coauthorship (3.92) and telepehone call graph (3.16) and directed network like email address books (3.38).  This low figure could be partly attributed to the small number of nodes. In the case of the Star Wars movie for instance, our interactions with characters of lesser importance are escaping our analysis, for instance Rey only interacts with five characters. For the club membership, the similuted with other social networks cited above could be revealing the fact that individuals interact with a few number of person who make up their close social circle. The average shortest path of both star wars and club membership networks are also relatively smaller than real-life networks (2.3 and 2.4) which also corrobores the smallness of the network. 
+
+
+# Part B 
+
+```{r my own network, include=FALSE}
+elise <- graph.empty(directed = FALSE)
+elise <- add_vertices(
+  elise, 
+  19, 	
+  name=c("E","C","S","Le","P","Th","Li","G","B", "Aus", "Auh", "Ch", "Lo", "Loo", "Mar", "Mari", "H", "J", "O")) 
+
+elise <- add_edges(
+  elise, 
+  c("C","S", "E","S", "E","C", "C","Le", "Le","E", "Le","G", "Le","B", "E","Th", "E","Li", "Th","Li", "Le","P", "S","P", "Aus","S", "Aus","C", "Auh","Aus", "Ch","S", "Lo","Aus", "Loo","Lo", "Mar","S", "Mar","C", "Mari","C", "Mari","Le", "H","C", "J","Le", "O","E", "Mari","H"))
+
+V(elise)
+length(E(elise))
+
+
+
+
+
+```
+
+```{r small world and random}
+# Random graph
+Rdm_net <- rgnm(1, 19, 26, mode="graph") # "digraph" for directed networks
+
+Rdm_net <- network(Rdm_net)
+
+
+# Small world
+
+# We run three Watts-Strogatz model with a network of the same size, changing the 
+#  rewiring probability "p". "dim" is the dimensionality of the regular network, 
+#  and "nei" the regular degree divided by 2.
+
+
+ws_net1_igraph <- watts.strogatz.game(dim=1, size=19, nei=2, p=0.2)
+
+ws_net <- asNetwork(ws_net1_igraph)
+
+
+```
+
+```{r}
+
+elise_net <- asNetwork(elise)
+elise_net_igraph <- asIgraph(elise_net)
+
+
+Rdm_net <- network(Rdm_net)
+rdm_net_igraph <- asIgraph(Rdm_net)
+```
+
+```{r Table}
+# Elise: Density, average degree, average shortest path
+
+edensity <- gden(elise_net, mode = "graph")
+adegreee <- mean(degree(elise_net))/2
+shpte <- average.path.length(elise_net_igraph, directed = FALSE)
+
+esum <- as.data.frame(c(edensity, adegreee, shpte))
+row.names(esum) <- c("Density", "Av.Degree", "Av.shortest.path")
+colnames(esum) <- c("Elise")
+
+# Small World: Density, average degree, average shortest path
+sw_density <- gden(ws_net, mode = "graph")
+adegrews <- mean(degree(ws_net))/2
+shptws <- average.path.length(ws_net1_igraph, directed = FALSE)
+
+wssum <- as.matrix(c(sw_density, adegrews, shptws))
+colnames(wssum) <- c("Small World")
+
+# Random: Density, average degree, average shor
+
+rdm_density <- gden(Rdm_net, mode = "graph")
+adegrerdm <- mean(degree(Rdm_net))/2
+shptrdm <- average.path.length(rdm_net_igraph, directed = FALSE)
+
+rdmsum <- as.matrix(c(rdm_density, adegrerdm, shptrdm))
+colnames(rdmsum) <- c("Random")
+
+# Join
+sumT <- esum %>% 
+  mutate(Random = rdmsum, 
+         `Small World` = wssum)
+```
+
+**20) Compare your network to a random network and small world network of the same size (also set seed). Provide a brief description of network, including a table with the main descriptives and figures of degree distribution for all 3 networks.** 
+
+My network "Elise" represents a wide network of friends from my previous university who still hang out together. It includes a tighter group of friends in the center, clustered around several cycles with the nodes Mar-S-E-Le-Mari-C-P-C. This is explained by the fact these actors were students in the same class. This cycle is made up of several triads like E-S-C, E-Le-C, C-Le-Mari, or S-Mar-C, which represent tighter groups of friends within the class. Peripheral parts of the network like the triad E-Li-Th, or the chain Aus-Lo-Loo, includes friends that were not originally in the group but were brought in by members of the groups. A few of them like B, J, Loo, O, or H, are siblings or partners which explains why they are only connected to one member of the group. 
+Even though this is an ego-network built from my perspective, the central node of the network is my friend C who interacts and have close relationships with many subgroups. 
+
+My network "Elise" and the Random network have the same density and the same average degree because we entered the number of nodes and edges in the random network generator. It also includes several cycles that are imbricated like in my network. However, the actors in these cycles seem to be less interconnected and are more distinct in the graph. It also includes several peripheral chains like in the Elise network. Unlike my network, however, it has one completely disconnected node (5). In addition, the main component is larger than for my network which is consistent with the characteristic of the cycles presented earlier: loser but also broader in such way it incorporate more members.  
+
+The small-world network presents more cycles and the main component that is overall more tightly connected than my network.  The centrality indicators are therefore higher (0.22, 4) and the average shortest path smaller (2.135) which is consistent with the type of network we generated. 
+
+
+```{r table, results='asis', include = TRUE, echo=TRUE}
+
+library(stargazer)
+
+stargazer(sumT, 
+          type = "latex", 
+          summary = FALSE, 
+          title = "Comparison of the three networks")
+```
+
+
+
+
+
+
+
+**Q 19: Present a very basic visualisation of all 3 networks (just to capture the basic structure of connections).**
+
+```{r}
+gplot(elise_net, 
+      edge.col = "#F7A072",
+      gmode = "graph",
+      displaylabels = TRUE,
+      label.cex = 0.6, 
+      label.col = "#8D8E8E", 
+     xlab = "Network of friends")
+
+
+gplot(ws_net, 
+      edge.col = "#F7A072",
+      gmode = "graph",
+      displaylabels = TRUE,
+      label.cex = 0.6, 
+      label.col = "#8D8E8E",
+     xlab = "Small World Network")
+
+
+gplot(Rdm_net,
+      edge.col = "#F7A072",
+      gmode = "graph",
+      displaylabels = TRUE,
+      label.cex = 0.6, 
+      label.col = "#8D8E8E",
+     xlab = "Random Network")
+
+
+```
+
+
+
+
+**20. Create a list of top 5 members by 3 centrality measures for your network. In your network:**
+**a) Who you consider the key figure to contact for distributing information? Why?** 
+Node C who has the highest measure of degree centrality which means she is the most likely to hold the most information. 
+
+**b) Who should get vaccinated first to avoid quick spreading of contagious disease? Why?** 
+Node C who has the highest measure of degree and betweenness centrality which means she not only interacts with a lot of people from the network, is also lies frequently on shortest paths between other nodes and can therefore influence how fast a disease spreads throughout the network.
+
+```{r}
+elise_df <- data.frame(actors=rep(V(elise)),
+                        degree=rep(degree(elise_net, gmode = "digraph")), 
+                         betweenness = rep(betweenness(elise_net, gmode="graph", cmode="undirected")), 
+                         closeness = rep(closeness(elise_net, gmode="graph", cmode="undirected"))) %>% 
+  arrange(desc(degree))
+
+
+betweenness <- betweenness(elise_net, gmode="graph", cmode="undirected")
+degree <- degree(elise_net, gmode = "digraph")
+```
+
+```{r table 3, results='asis'}
+stargazer(elise_df, 
+          type = "latex", 
+          summary = FALSE, 
+          title = "Centrality analysis of Elise's network")
+```
+
+
+**21. Create a visualisation of your social network (use labels, colours etc).** 
+
+```{r Visualisation, include =TRUE, echo=TRUE, results='asis'}
+
+palette(c("#61E8E1", "#F2E863"))
+
+gplot(elise_net, 
+      vertex.cex = betweenness,
+      gmode = "graph",
+      object.scale = 0.0005, 
+      edge.lwd = 10,
+      edge.col = "#F7A072", 
+      label.cex = 0.6, 
+      label.col = "#8D8E8E",
+      displaylabels = TRUE, 
+      xlab = "Friends network by measure of betweeness centrality")
+
+
+
+```
+
